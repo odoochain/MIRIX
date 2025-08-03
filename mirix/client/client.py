@@ -378,7 +378,7 @@ class LocalClient(AbstractClient):
 
         # set logging levels
         mirix.utils.DEBUG = debug
-        logging.getLogger().setLevel(logging.CRITICAL)
+        # logging.getLogger().setLevel(logging.CRITICAL)
 
         # save default model config
         self._default_llm_config = default_llm_config

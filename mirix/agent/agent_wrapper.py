@@ -27,6 +27,7 @@ from typing import Optional
 import queue
 from PIL import Image
 import logging
+
 from ..voice_utils import process_voice_files, convert_base64_to_audio_segment
 from .app_utils import encode_image_from_pil, encode_image
 
@@ -44,6 +45,8 @@ from mirix.schemas.agent import AgentType
 from mirix.prompts import gpt_system
 from mirix.schemas.memory import ChatMemory
 from mirix.settings import model_settings
+
+logging.basicConfig(level=logging.INFO, format='[%(name)s] %(levelname)s: %(message)s')
 
 def encode_image(image_path):
     with open(image_path, "rb") as img_file:
@@ -104,6 +107,7 @@ class AgentWrapper():
         self.agent_name = agent_config['agent_name']
         self.model_name = agent_config['model_name']
         self.is_screen_monitor = agent_config.get('is_screen_monitor', False)
+        self.is_camera_monitor = agent_config.get('is_camera_monitor', False)
 
         # Initialize logger early
         self.logger = logging.getLogger(f"Mirix.AgentWrapper.{self.agent_name}")
@@ -145,7 +149,12 @@ class AgentWrapper():
                 elif agent_state.name == 'background_agent':
                     self.agent_states.background_agent_state = agent_state
 
-                system_prompt = gpt_system.get_system_text(agent_state.name) if not self.is_screen_monitor else gpt_system.get_system_text(agent_state.name + '_screen_monitor')
+                if self.is_screen_monitor:
+                    system_prompt = gpt_system.get_system_text(agent_state.name + '_screen_monitor')
+                elif self.is_camera_monitor:
+                    system_prompt = gpt_system.get_system_text(agent_state.name + '_camera_monitor_chinese')
+                else:
+                    system_prompt = gpt_system.get_system_text(agent_state.name)
 
                 self.client.server.agent_manager.update_agent_tools_and_system_prompts(
                     agent_id=agent_state.id,
@@ -189,11 +198,18 @@ class AgentWrapper():
                     )
                 else:
                     # All other agents follow the same pattern
+                    if self.is_screen_monitor:
+                        system_text = gpt_system.get_system_text(config['name'] + '_screen_monitor')
+                    elif self.is_camera_monitor:
+                        system_text = gpt_system.get_system_text(config['name'] + '_camera_monitor_chinese')
+                    else:
+                        system_text = gpt_system.get_system_text(config['name'])
+                    
                     agent_state = self.client.create_agent(
                         name=config['name'],
                         agent_type=config['agent_type'],
                         memory=core_memory,
-                        system=gpt_system.get_system_text(config['name']) if not self.is_screen_monitor else gpt_system.get_system_text(config['name']) + gpt_system.get_system_text(config['name'] + '_screen_monitor'),
+                        system=system_text,
                         include_base_tools=config['include_base_tools'],
                     )
                 
@@ -1247,6 +1263,7 @@ class AgentWrapper():
                         'active_persona_name': getattr(self, 'active_persona_name', 'helpful_assistant'),
                         'include_recent_screenshots': getattr(self, 'include_recent_screenshots', True),
                         'is_screen_monitor': getattr(self, 'is_screen_monitor', False),
+                        'is_camera_monitor': getattr(self, 'is_camera_monitor', False),
                         'backup_type': 'postgresql',
                         'backup_timestamp': datetime.now().isoformat(),
                         'connection_info': {
@@ -1288,6 +1305,7 @@ class AgentWrapper():
                         'active_persona_name': getattr(self, 'active_persona_name', 'helpful_assistant'),
                         'include_recent_screenshots': getattr(self, 'include_recent_screenshots', True),
                         'is_screen_monitor': getattr(self, 'is_screen_monitor', False),
+                        'is_camera_monitor': getattr(self, 'is_camera_monitor', False),
                         'backup_type': 'sqlite',
                         'backup_timestamp': datetime.now().isoformat()
                     }

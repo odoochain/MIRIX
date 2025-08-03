@@ -26,7 +26,8 @@ from mirix.constants import (
     CLEAR_HISTORY_AFTER_MEMORY_UPDATE,
     MAX_EMBEDDING_DIM,
     MAX_RETRIEVAL_LIMIT_IN_SYSTEM,
-    MAX_CHAINING_STEPS
+    MAX_CHAINING_STEPS,
+    CHAINING_FOR_MEMORY_UPDATE
 )
 import logging
 from mirix import LLMConfig
@@ -625,7 +626,8 @@ class Agent(BaseAgent):
                 if function_name == 'trigger_memory_update':
                     function_args["user_message"] = {'message': convert_message_to_input_message(input_message), 
                                                      'existing_file_uris': existing_file_uris,
-                                                     'retrieved_memories': retrieved_memories}
+                                                     'retrieved_memories': retrieved_memories,
+                                                     "chaining": CHAINING_FOR_MEMORY_UPDATE}
                     if message_queue is not None:
                         function_args["user_message"]['message_queue'] = message_queue
                 

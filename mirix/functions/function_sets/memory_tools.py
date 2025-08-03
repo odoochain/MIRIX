@@ -97,7 +97,7 @@ def episodic_memory_merge(self: "Agent", event_id: str, combined_summary: str = 
     Args:
         event_id (str): This is the id of which episodic event to append to. 
         combined_summary (str): The updated summary. Note that it will overwrite the old summary so make sure to include the information from the old summary. The new summary needs to be only slightly different from the old summary.
-        combined_details (str): The new details to add into the details of the selected episodic event.
+        combined_details (str): The updated details. Note that it will overwrite the old details so make sure to include the information from the old details.
     
     Returns:
         Optional[str]: None is always returned as this function does not produce a response.
