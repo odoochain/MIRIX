@@ -19,7 +19,6 @@ sqlalchemy
 pydantic-settings
 jinja2
 humps
-composio
 colorama
 anthropic
 httpx_sse

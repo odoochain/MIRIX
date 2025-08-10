@@ -5,9 +5,11 @@ import json
 import time
 import argparse
 import numpy as np
+import subprocess
+import tempfile
 from tqdm import tqdm
 from conversation_creator import ConversationCreator
-from agent import AgentWrapper
+
 
 
 def parse_args():
@@ -23,118 +25,62 @@ def parse_args():
     parser.add_argument("--force_answer_question", action="store_true", default=False)
     return parser.parse_args()
 
-def run_with_chunks_and_questions(
-        args,
-        global_idx,
-        chunks, 
-        queries_and_answers):
-
-    out_dir = f"./results/{args.agent_name}_{args.dataset}/"
-    if args.agent_name == 'gpt-long-context' or args.agent_name == 'gemini-long-context':
-        out_dir = f"./results/{args.agent_name}_{args.dataset}-{args.model_name}/"
-
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-
-    out_dir = out_dir + f"{global_idx}"
-
-    if os.path.exists(out_dir):
-        
-        agent = AgentWrapper(args.agent_name, load_agent_from=out_dir, model_name=args.model_name, config_path=args.config_path)
+def run_with_chunks_and_questions_subprocess(args, global_idx, chunks, queries_and_answers):
+    """
+    Run the extracted function using subprocess to isolate memory and processes.
+    """
+    # Create temporary files for chunks and queries
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as chunks_file:
+        json.dump(chunks, chunks_file, indent=2)
+        chunks_filepath = chunks_file.name
     
-    else:
-
-        if args.agent_name == 'mirix':
-            if os.path.exists(os.path.expanduser(f"~/.mirix/sqlite.db")):
-                # need to delete the existing db
-                os.system(f"rm -rf ~/.mirix/sqlite.db")
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as queries_file:
+        json.dump(queries_and_answers, queries_file, indent=2)
+        queries_filepath = queries_file.name
+    
+    try:
+        # Build command arguments
+        cmd = [
+            'python', 'run_instance.py',
+            '--agent_name', args.agent_name,
+            '--dataset', args.dataset,
+            '--global_idx', str(global_idx),
+            '--chunks_file', chunks_filepath,
+            '--queries_file', queries_filepath
+        ]
+        
+        # Add optional arguments
+        if args.model_name:
+            cmd.extend(['--model_name', args.model_name])
+        if args.config_path:
+            cmd.extend(['--config_path', args.config_path])
+        if args.force_answer_question:
+            cmd.append('--force_answer_question')
+        
+        # Run the subprocess
+        print(f"Running subprocess for global_idx {global_idx}")
+        result = subprocess.run(cmd, cwd=os.path.dirname(os.path.abspath(__file__)), 
+                              capture_output=True, text=True, check=True)
+        
+        print(f"Subprocess completed successfully for global_idx {global_idx}")
+        if result.stdout:
+            print("STDOUT:", result.stdout)
+        if result.stderr:
+            print("STDERR:", result.stderr)
             
-        agent = AgentWrapper(args.agent_name, model_name=args.model_name, config_path=args.config_path)
-
-    if os.path.exists(f"{out_dir}/current_step.txt"):
-        with open(f"{out_dir}/current_step.txt", "rb") as f:
-            current_step = int(f.read().decode())
-    else:
-        current_step = -1
-
-    if os.path.exists(f"{out_dir}/chunks.json"):
-        with open(f"{out_dir}/chunks.json", "r") as f:
-            existing_chunks = json.load(f)
-    else:
-        existing_chunks = []
-
-    for idx, next_chunk in tqdm(enumerate(chunks), total=len(chunks)):
-
-        if idx <= current_step or args.force_answer_question:
-            continue
-
-        if args.dataset == 'ScreenshotVQA':
-            image_uris, timestamp = [x[0] for x in next_chunk], [x[1] for x in next_chunk]
-            response = agent.send_message(message=None, 
-                                          image_uris=image_uris, 
-                                          memorizing=True,
-                                          timestamp=timestamp)
-            existing_chunks.append({
-                'image_uri': image_uris,
-                'response': response
-            })
-        else:
-            prompt = next_chunk
-            response = agent.send_message(prompt, memorizing=True)
-
-            existing_chunks.append({
-                'message': prompt,
-                'response': response
-            })
-
-        if args.agent_name == 'mirix':
-            agent.save_agent(out_dir)
-
-            with open(f"{out_dir}/current_step.txt", "wb") as f:
-                f.write(str(idx).encode())
-
-            with open(f"{out_dir}/chunks.json", "w") as f:
-                json.dump(existing_chunks, f, indent=2)
-
-    agent.save_agent(out_dir)
-
-    agent.prepare_before_asking_questions()
-
-    if os.path.exists(f"{out_dir}/results.json"):
-        existing_results = json.load(open(f"{out_dir}/results.json", "r"))
-    else:
-        existing_results = []
+    except subprocess.CalledProcessError as e:
+        print(f"Subprocess failed for global_idx {global_idx} with return code {e.returncode}")
+        print("STDOUT:", e.stdout)
+        print("STDERR:", e.stderr)
+        raise
     
-    existing_results = [x for x in existing_results if x['response'] != 'ERROR']
-
-    all_questions = [x['question'] for x in existing_results]
-
-    for item in queries_and_answers:
-
-        if (item[3]['question'] if len(item) > 3 else item[1]) in all_questions:
-            item_idx = all_questions.index(item[3]['question'] if len(item) > 3 else item[1])
-            if 'metadata' not in existing_results[item_idx]:
-                existing_results[item_idx]['metadata'] = item[3]
-                with open(f"{out_dir}/results.json", "w") as f:
-                    json.dump(existing_results, f, indent=2)
-            continue
-        print("Question [{} / {}]: ".format(len(existing_results), len(queries_and_answers)), item[3]['question'] if len(item) > 3 else item[1])
-
-        response = agent.send_message(item[1], memorizing=False)
-
-        existing_results.append(
-            {
-                'question': item[3]['question'] if len(item) > 3 else item[1],
-                'response': response,
-                'answer': item[2],
-                'metadata': item[3] if len(item) > 3 else None
-            }
-        )
-
-        with open(f"{out_dir}/results.json", "w") as f:
-            json.dump(existing_results, f, indent=2)
-        
-        agent = AgentWrapper(args.agent_name, load_agent_from=out_dir, model_name=args.model_name, config_path=args.config_path)
+    finally:
+        # Clean up temporary files
+        try:
+            os.unlink(chunks_filepath)
+            os.unlink(queries_filepath)
+        except OSError:
+            pass
 
 def main():
     
@@ -154,7 +100,7 @@ def main():
         if args.global_idx is not None and global_idx != args.global_idx:
             continue
         
-        run_with_chunks_and_questions(args, global_idx, chunks, queries_and_answers)
+        run_with_chunks_and_questions_subprocess(args, global_idx, chunks, queries_and_answers)
 
 if __name__ == '__main__':
     main()
