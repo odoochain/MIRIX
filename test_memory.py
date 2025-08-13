@@ -943,7 +943,7 @@ def test_all_memories():
     print("Starting comprehensive memory system tests...\n")
     
     # Initialize the agent with config file
-    agent = AgentWrapper("configs/mirix_monitor.yaml")
+    agent = AgentWrapper("mirix/configs/mirix_monitor.yaml")
     
     # agent.save_agent("./tmp/temp_agent")
 
@@ -962,7 +962,7 @@ def test_all_memories():
         print("All memory tests completed successfully!")
 
         # print("Loading agent from saved state...")
-        # agent = AgentWrapper("configs/mirix.yaml", load_from="./tmp/temp_agent")
+        # agent = AgentWrapper("mirix/configs/mirix.yaml", load_from="./tmp/temp_agent")
         
     except Exception as e:
         print(f"Error during testing: {e}")
@@ -973,7 +973,7 @@ def test_all_memories():
         test_tracker.print_summary()
 
 def test_greeting():
-    agent = AgentWrapper("configs/mirix.yaml")
+    agent = AgentWrapper("mirix/configs/mirix.yaml")
     response = agent.send_message(
         message="Hello, how are you?",
         memorizing=False
@@ -996,7 +996,7 @@ def test_greeting_with_images():
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode("utf-8")
 
-    agent = AgentWrapper("configs/mirix.yaml")
+    agent = AgentWrapper("mirix/configs/mirix.yaml")
 
     # # case 1: image_url
 
@@ -1104,7 +1104,7 @@ def test_greeting_with_files(file_path):
     """Test file handling functionality with OpenAI, Claude, and Google AI"""
     print("=== Testing File Handling with Multiple AI Providers ===")
     
-    agent = AgentWrapper("configs/mirix.yaml")
+    agent = AgentWrapper("mirix/configs/mirix.yaml")
     
     # Test 1: OpenAI-style file format
     print("\n--- Test 1: OpenAI-style file format ---")
@@ -1219,7 +1219,7 @@ def test_file_types():
     """Test different file types handling"""
     print("=== Testing Different File Types ===")
     
-    agent = AgentWrapper("configs/mirix.yaml")
+    agent = AgentWrapper("mirix/configs/mirix.yaml")
     agent.set_model("gpt-4.1")
     
     # Create test files of different types (for demonstration)
@@ -1262,7 +1262,7 @@ def test_file_with_memory():
     """Test file handling with memory enabled"""
     print("=== Testing File Handling with Memory ===")
     
-    agent = AgentWrapper("configs/mirix.yaml")
+    agent = AgentWrapper("mirix/configs/mirix.yaml")
     agent.set_model("gpt-4.1")
     
     file_path = "exp1.pdf"

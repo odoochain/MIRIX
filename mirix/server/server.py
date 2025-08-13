@@ -470,11 +470,11 @@ class SyncServer(Server):
                     api_key=gemini_api_key,
                 )
             )
-        if model_settings.azure_api_key and model_settings.azure_base_url:
+        if model_settings.azure_openai_api_key and model_settings.azure_base_url:
             assert model_settings.azure_api_version, "AZURE_API_VERSION is required"
             self._enabled_providers.append(
                 AzureProvider(
-                    api_key=model_settings.azure_api_key,
+                    api_key=model_settings.azure_oapi_key,
                     base_url=model_settings.azure_base_url,
                     api_version=model_settings.azure_api_version,
                 )

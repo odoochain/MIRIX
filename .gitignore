@@ -27,7 +27,6 @@ coverage/
 .eslintcache
 local_test
 results/
-data/
 mirix_env/
 local_evaluations
 .claude/

@@ -193,6 +193,7 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
 
         additional_kwargs = {"user_id": user_id} if user_id else {}
         model = OpenAIEmbedding(
+            model=config.embedding_model,
             api_base=config.embedding_endpoint,
             api_key=api_key,
             additional_kwargs=additional_kwargs,
@@ -209,6 +210,7 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
         api_key = override_key if override_key else model_settings.gemini_api_key
         
         model = GoogleGenAIEmbedding(
+            # model=config.embedding_model,
             model_name=config.embedding_model,
             api_key=api_key,
             api_base=config.embedding_endpoint,

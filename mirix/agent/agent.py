@@ -1007,7 +1007,7 @@ class Agent(BaseAgent):
                             'required': ['topic']
                         },
                     }]
-                    
+
                     # Use LLMClient to extract topics
                     llm_client = LLMClient.create(
                         llm_config=self.agent_state.llm_config,
@@ -1040,7 +1040,7 @@ class Agent(BaseAgent):
                             except (json.JSONDecodeError, KeyError) as parse_error:
                                 self.logger.warning(f"Failed to parse topic extraction response: {parse_error}")
                                 continue
-        
+
                     if topics is not None:
                         kwargs['topics'] = topics
                         self.update_topic_if_changed(topics)
@@ -1160,7 +1160,7 @@ class Agent(BaseAgent):
         else:
             retrieved_memories["key_words"] = key_words
 
-        search_method = 'bm25'
+        search_method = 'embedding'
 
         # Prepare embedding for semantic search
         if key_words != '' and search_method == 'embedding':

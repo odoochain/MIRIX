@@ -33,7 +33,7 @@ class AzureOpenAIClient(OpenAIClient):
         else:
             # Check for database-stored API key first, fall back to model_settings and environment
             override_key = ProviderManager().get_azure_openai_override_key()
-            api_key = override_key or model_settings.azure_api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+            api_key = override_key or model_settings.azure_openai_api_key or os.environ.get("AZURE_OPENAI_API_KEY")
             
         # Get Azure-specific configurations
         azure_endpoint = getattr(self.llm_config, 'azure_endpoint', None) or model_settings.azure_base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
