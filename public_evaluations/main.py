@@ -6,7 +6,6 @@ import time
 import argparse
 import numpy as np
 import subprocess
-import tempfile
 from tqdm import tqdm
 from conversation_creator import ConversationCreator
 
@@ -25,62 +24,61 @@ def parse_args():
     parser.add_argument("--force_answer_question", action="store_true", default=False)
     return parser.parse_args()
 
-def run_with_chunks_and_questions_subprocess(args, global_idx, chunks, queries_and_answers):
+def run_with_chunks_and_questions_subprocess(args, global_idx):
     """
     Run the extracted function using subprocess to isolate memory and processes.
     """
-    # Create temporary files for chunks and queries
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as chunks_file:
-        json.dump(chunks, chunks_file, indent=2)
-        chunks_filepath = chunks_file.name
+    # Build command arguments
+    cmd = [
+        'python', 'run_instance.py',
+        '--agent_name', args.agent_name,
+        '--dataset', args.dataset,
+        '--global_idx', str(global_idx),
+        '--num_exp', str(args.num_exp)
+    ]
     
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as queries_file:
-        json.dump(queries_and_answers, queries_file, indent=2)
-        queries_filepath = queries_file.name
+    # Add optional arguments
+    if args.model_name:
+        cmd.extend(['--model_name', args.model_name])
+    if args.config_path:
+        cmd.extend(['--config_path', args.config_path])
+    if args.force_answer_question:
+        cmd.append('--force_answer_question')
     
     try:
-        # Build command arguments
-        cmd = [
-            'python', 'run_instance.py',
-            '--agent_name', args.agent_name,
-            '--dataset', args.dataset,
-            '--global_idx', str(global_idx),
-            '--chunks_file', chunks_filepath,
-            '--queries_file', queries_filepath
-        ]
-        
-        # Add optional arguments
-        if args.model_name:
-            cmd.extend(['--model_name', args.model_name])
-        if args.config_path:
-            cmd.extend(['--config_path', args.config_path])
-        if args.force_answer_question:
-            cmd.append('--force_answer_question')
-        
-        # Run the subprocess
+        # Run the subprocess with real-time output
         print(f"Running subprocess for global_idx {global_idx}")
-        result = subprocess.run(cmd, cwd=os.path.dirname(os.path.abspath(__file__)), 
-                              capture_output=True, text=True, check=True)
+        print("=" * 50)
         
-        print(f"Subprocess completed successfully for global_idx {global_idx}")
-        if result.stdout:
-            print("STDOUT:", result.stdout)
-        if result.stderr:
-            print("STDERR:", result.stderr)
+        process = subprocess.Popen(
+            cmd, 
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout
+            text=True,
+            bufsize=1,  # Line buffered
+            universal_newlines=True
+        )
+        
+        # Stream output in real-time
+        for line in process.stdout:
+            print(line, end='')  # Print without adding extra newline
+        
+        # Wait for process to complete and get return code
+        return_code = process.wait()
+        
+        print("=" * 50)
+        print(f"Subprocess completed for global_idx {global_idx} with return code {return_code}")
+        
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd)
             
     except subprocess.CalledProcessError as e:
         print(f"Subprocess failed for global_idx {global_idx} with return code {e.returncode}")
-        print("STDOUT:", e.stdout)
-        print("STDERR:", e.stderr)
         raise
-    
-    finally:
-        # Clean up temporary files
-        try:
-            os.unlink(chunks_filepath)
-            os.unlink(queries_filepath)
-        except OSError:
-            pass
+    except Exception as e:
+        print(f"Unexpected error running subprocess for global_idx {global_idx}: {e}")
+        raise
 
 def main():
     
@@ -100,7 +98,7 @@ def main():
         if args.global_idx is not None and global_idx != args.global_idx:
             continue
         
-        run_with_chunks_and_questions_subprocess(args, global_idx, chunks, queries_and_answers)
+        run_with_chunks_and_questions_subprocess(args, global_idx)
 
 if __name__ == '__main__':
     main()

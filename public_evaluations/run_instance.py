@@ -8,7 +8,9 @@ import json
 import argparse
 from tqdm import tqdm
 from agent import AgentWrapper
-
+from conversation_creator import ConversationCreator
+import logging
+logging.basicConfig(level=logging.INFO)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run instance with chunks and questions")
@@ -18,8 +20,7 @@ def parse_args():
     parser.add_argument("--model_name", type=str, default="gpt-4.1", help="Model name to use for gpt-long-context agent")
     parser.add_argument("--config_path", type=str, default=None, help="Config file path for mirix agent")
     parser.add_argument("--force_answer_question", action="store_true", default=False)
-    parser.add_argument("--chunks_file", type=str, required=True, help="Path to chunks JSON file")
-    parser.add_argument("--queries_file", type=str, required=True, help="Path to queries and answers JSON file")
+    parser.add_argument("--num_exp", type=int, default=100, help="Number of experiments")
     return parser.parse_args()
 
 
@@ -140,12 +141,20 @@ def run_with_chunks_and_questions(
 def main():
     args = parse_args()
     
-    # Load chunks and queries from files
-    with open(args.chunks_file, 'r') as f:
-        chunks = json.load(f)
+    # Load chunks and queries using ConversationCreator like in main.py
+    conversation_creator = ConversationCreator(args.dataset, args.num_exp)
+
+    if args.agent_name == 'gpt-long-context':
+        with_instructions = False
+    else: 
+        with_instructions = True
+
+    all_chunks = conversation_creator.chunks(with_instructions=with_instructions)
+    all_queries_and_answers = conversation_creator.get_query_and_answer()
     
-    with open(args.queries_file, 'r') as f:
-        queries_and_answers = json.load(f)
+    # Get the specific chunks and queries for this global_idx
+    chunks = all_chunks[args.global_idx]
+    queries_and_answers = all_queries_and_answers[args.global_idx]
     
     run_with_chunks_and_questions(args, args.global_idx, chunks, queries_and_answers)
 
