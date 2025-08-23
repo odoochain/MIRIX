@@ -116,6 +116,9 @@ def run_with_chunks_and_questions(
     agent.save_agent(out_dir)
     agent.prepare_before_asking_questions()
 
+    # DEBUG: Assert chat agent only has 1 message
+    if args.agent_name == 'mirix':
+        assert len(agent.agent.client.server.agent_manager.get_agent_by_id(agent.agent.agent_states.agent_state.id, agent.agent.client.user).message_ids) == 1
 
     # save the parameters
     with open(f"{out_dir}/parameters.json", "w") as f:

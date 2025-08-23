@@ -77,13 +77,8 @@ class AgentWrapper():
                 self.load_agent(load_agent_from, config_path)
 
     def prepare_before_asking_questions(self):
-        if self.agent_name == 'gpt-long-context':
-            return
-
-        elif self.agent_name == 'gemini-long-context':
-            return
-
-        elif self.agent_name == 'mirix':
+        
+        if self.agent_name == 'mirix':
             self.agent.update_core_memory_persona("Is a helpful assistant that answers questions with extreme conciseness.\nIs persistent and tries to find the answerr using different queries and different search methods. Never uses unnecessary words or repeats the question in the answer. Always provides the shortest answer possible and tries to utter the fewest words possible.")
 
     def get_answer_from_retrieved_images_and_texts(self, retrieved_images=None, retrieved_texts=None, message=None, model_name='gpt-4o-mini', retrieved_captions=None):
