@@ -1,0 +1,58 @@
+# Mirix Configuration - Anthropic Claude Setup
+# Configuration using Anthropic's Claude 3.5 Sonnet
+
+llm_config:
+  model: "claude-3-5-sonnet-20241022"
+  model_endpoint_type: "anthropic"
+  model_endpoint: "https://api.anthropic.com/v1"
+  context_window: 200000
+  # api_key: "your-anthropic-key"  # Or use ANTHROPIC_API_KEY env var
+
+# Optional: separate model for topic extraction
+topic_extraction_llm_config:
+  model: "claude-3-5-sonnet-20241022"
+  model_endpoint_type: "anthropic"
+  model_endpoint: "https://api.anthropic.com/v1"
+  context_window: 200000
+  # Local OpenAI-compatible (LM Studio / vLLM):
+  # model: "your-local-model"
+  # model_endpoint_type: "openai"
+  # model_endpoint: "http://localhost:1234/v1"
+  # is_local_model: true
+  # context_window: 8192
+  # Ollama (local):
+  # model: "llama3.2"
+  # model_endpoint_type: "ollama"
+  # model_endpoint: "http://localhost:11434"
+  # context_window: 8192
+
+build_embeddings_for_memory: true
+
+# Note: Anthropic doesn't provide embeddings, so we use OpenAI or Google
+embedding_config:
+  embedding_model: "text-embedding-004"
+  embedding_endpoint_type: "google_ai"
+  embedding_dim: 768
+
+meta_agent_config:
+  agents:
+    - core_memory_agent
+    - resource_memory_agent
+    - semantic_memory_agent
+    - episodic_memory_agent
+    - procedural_memory_agent
+    - knowledge_memory_agent
+    - meta_memory_agent
+    - reflexion_agent
+    - background_agent
+  memory:
+    core:
+      - label: "human"
+        value: ""
+      - label: "persona"
+        value: "I am a helpful assistant."
+    # Memory decay - controls automatic aging and cleanup
+    decay:
+      fade_after_days: 30     # Memories older than this become inactive (excluded from retrieval)
+      expire_after_days: 90   # Memories older than this are permanently deleted
+

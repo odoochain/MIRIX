@@ -39,6 +39,10 @@ class Message(BaseModel):
     tool_calls: Optional[List[ToolCall]] = None
     role: str
     function_call: Optional[FunctionCall] = None  # Deprecated
+    # Reasoning/thinking content from models with native reasoning capabilities
+    reasoning_content: Optional[str] = None
+    reasoning_content_signature: Optional[str] = None
+    redacted_reasoning_content: Optional[str] = None
 
 
 class Choice(BaseModel):
@@ -49,12 +53,51 @@ class Choice(BaseModel):
     seed: Optional[int] = None  # found in TogetherAI
 
 
+class PromptTokensDetails(BaseModel):
+    """Details about prompt token usage, including cached tokens."""
+
+    cached_tokens: int = 0
+    audio_tokens: int = 0
+    text_tokens: int = 0
+    image_tokens: int = 0
+
+
+class CompletionTokensDetails(BaseModel):
+    """Details about completion token usage."""
+
+    reasoning_tokens: int = 0
+    audio_tokens: int = 0
+    accepted_prediction_tokens: int = 0
+    rejected_prediction_tokens: int = 0
+
+
 class UsageStatistics(BaseModel):
     completion_tokens: int = 0
     prompt_tokens: int = 0
     total_tokens: int = 0
     last_prompt_tokens: int = 0
     last_completion_tokens: int = 0
+    # Detailed token breakdown (OpenAI API format)
+    prompt_tokens_details: Optional[PromptTokensDetails] = None
+    completion_tokens_details: Optional[CompletionTokensDetails] = None
+    # Additional fields from some providers
+    num_sources_used: int = 0
+
+    @property
+    def cached_tokens(self) -> int:
+        """Get the number of cached input tokens."""
+
+        if self.prompt_tokens_details:
+            return self.prompt_tokens_details.cached_tokens
+        return 0
+
+    @property
+    def reasoning_tokens(self) -> int:
+        """Get the number of reasoning tokens (for reasoning models like o1, grok-reasoning)."""
+
+        if self.completion_tokens_details:
+            return self.completion_tokens_details.reasoning_tokens
+        return 0
 
     def __add__(self, other: "UsageStatistics") -> "UsageStatistics":
         return UsageStatistics(
@@ -70,7 +113,9 @@ class ChatCompletionResponse(BaseModel):
     id: str
     choices: List[Choice]
     created: datetime.datetime
-    model: Optional[str] = None  # NOTE: this is not consistent with OpenAI API standard, however is necessary to support local LLMs
+    model: Optional[str] = (
+        None  # NOTE: this is not consistent with OpenAI API standard, however is necessary to support local LLMs
+    )
     # system_fingerprint: str  # docs say this is mandatory, but in reality API returns None
     system_fingerprint: Optional[str] = None
     # object: str = Field(default="chat.completion")
@@ -120,6 +165,8 @@ class MessageDelta(BaseModel):
     tool_calls: Optional[List[ToolCallDelta]] = None
     # role: Optional[str] = None
     function_call: Optional[FunctionCallDelta] = None  # Deprecated
+    # Reasoning/thinking content from models with native reasoning capabilities
+    reasoning_content: Optional[str] = None
 
 
 class ChunkChoice(BaseModel):

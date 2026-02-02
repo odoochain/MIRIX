@@ -105,13 +105,14 @@ class ChatCompletionRequest(BaseModel):
     logprobs: Optional[bool] = False
     top_logprobs: Optional[int] = None
     max_tokens: Optional[int] = None
+    max_completion_tokens: Optional[int] = None
     n: Optional[int] = 1
     presence_penalty: Optional[float] = 0
     response_format: Optional[ResponseFormat] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     stream: Optional[bool] = False
-    temperature: Optional[float] = 1 # TODO: might need to add logics to control this
+    temperature: Optional[float] = 1  # TODO: might need to add logics to control this
     top_p: Optional[float] = 1
 
     # function-calling related

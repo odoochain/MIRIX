@@ -4,9 +4,16 @@ from typing import Any, List, Optional
 import numpy as np
 import tiktoken
 
-from mirix.constants import EMBEDDING_TO_TOKENIZER_DEFAULT, EMBEDDING_TO_TOKENIZER_MAP, MAX_EMBEDDING_DIM
+from mirix.constants import (
+    EMBEDDING_TO_TOKENIZER_DEFAULT,
+    EMBEDDING_TO_TOKENIZER_MAP,
+    MAX_EMBEDDING_DIM,
+)
+from mirix.log import get_logger
 from mirix.schemas.embedding_config import EmbeddingConfig
 from mirix.utils import is_valid_url, printd
+
+logger = get_logger(__name__)
 
 
 def parse_and_chunk_text(text: str, chunk_size: int) -> List[str]:
@@ -31,7 +38,9 @@ def check_and_split_text(text: str, embedding_model: str) -> List[str]:
     if embedding_model in EMBEDDING_TO_TOKENIZER_MAP:
         encoding = tiktoken.get_encoding(EMBEDDING_TO_TOKENIZER_MAP[embedding_model])
     else:
-        print(f"Warning: couldn't find tokenizer for model {embedding_model}, using default tokenizer {EMBEDDING_TO_TOKENIZER_DEFAULT}")
+        logger.debug(
+            f"Warning: couldn't find tokenizer for model {embedding_model}, using default tokenizer {EMBEDDING_TO_TOKENIZER_DEFAULT}"
+        )
         encoding = tiktoken.get_encoding(EMBEDDING_TO_TOKENIZER_DEFAULT)
 
     num_tokens = len(encoding.encode(text))
@@ -42,18 +51,85 @@ def check_and_split_text(text: str, embedding_model: str) -> List[str]:
         max_length = encoding.max_length
     else:
         # TODO: figure out the real number
-        printd(f"Warning: couldn't find max_length for tokenizer {embedding_model}, using default max_length 8191")
+        printd(
+            f"Warning: couldn't find max_length for tokenizer {embedding_model}, using default max_length 8191"
+        )
         max_length = 8191
 
     # truncate text if too long
     if num_tokens > max_length:
-        print(f"Warning: text is too long ({num_tokens} tokens), truncating to {max_length} tokens.")
-        # First, apply any necessary formatting
-        formatted_text = format_text(text, embedding_model)
-        # Then truncate
-        text = truncate_text(formatted_text, max_length, encoding)
+        logger.debug(
+            f"Warning: text is too long ({num_tokens} tokens), truncating to {max_length} tokens."
+        )
+        # Truncate the text
+        text = truncate_text(text, max_length, encoding)
 
     return [text]
+
+
+class OpenAIEmbeddingWithCustomAuth:
+    """OpenAI embedding client with auth provider support using sync OpenAI SDK."""
+
+    def __init__(self, config: EmbeddingConfig, auth_provider: str):
+        """
+        Initialize OpenAI embedding client with auth provider support.
+
+        Args:
+            config: EmbeddingConfig with auth_provider field set
+            api_key: OpenAI API key
+        """
+        self.config = config
+        self.model = config.embedding_model
+        self.auth_provider = auth_provider
+
+    def get_text_embedding(self, text: str) -> List[float]:
+        """
+        Get embedding with dynamic auth headers from auth provider.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            List of floats representing the embedding vector
+
+        Raises:
+            ValueError: If auth provider is not found in registry
+        """
+        from openai import OpenAI
+
+        from mirix.llm_api.auth_provider import get_auth_provider
+
+        # Get auth headers from provider (sync)
+        auth_provider = get_auth_provider(self.auth_provider)
+        if not auth_provider:
+            raise ValueError(
+                f"Auth provider '{self.config.auth_provider}' not found in registry. "
+                "Make sure to register it before using."
+            )
+
+        try:
+            auth_headers = auth_provider.get_auth_headers()  # Sync call
+            logger.info(
+                f"OpenAI Embedding - Using auth provider '{self.config.auth_provider}' "
+                f"to inject {len(auth_headers)} header(s)"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to get auth headers from provider '{self.config.auth_provider}': {e}"
+            )
+            raise
+
+        # Create OpenAI client with auth headers
+        client = OpenAI(
+            api_key="DUMMY_API_KEY",  # This is not used, but the SDK will thow an error if it is not set
+            base_url=self.config.embedding_endpoint,
+            default_headers=auth_headers,
+        )
+
+        # Call embeddings API
+        response = client.embeddings.create(model=self.model, input=text)
+
+        return response.data[0].embedding
 
 
 class EmbeddingEndpoint:
@@ -113,10 +189,14 @@ class EmbeddingEndpoint:
             try:
                 embedding = response_json["data"][0]["embedding"]
             except (KeyError, IndexError):
-                raise TypeError(f"Got back an unexpected payload from text embedding function, response=\n{response_json}")
+                raise TypeError(
+                    f"Got back an unexpected payload from text embedding function, response=\n{response_json}"
+                )
         else:
             # unknown response, can't parse
-            raise TypeError(f"Got back an unexpected payload from text embedding function, response=\n{response_json}")
+            raise TypeError(
+                f"Got back an unexpected payload from text embedding function, response=\n{response_json}"
+            )
 
         return embedding
 
@@ -128,16 +208,21 @@ class AzureOpenAIEmbedding:
     def __init__(self, api_endpoint: str, api_key: str, api_version: str, model: str):
         from openai import AzureOpenAI
 
-        self.client = AzureOpenAI(api_key=api_key, api_version=api_version, azure_endpoint=api_endpoint)
+        self.client = AzureOpenAI(
+            api_key=api_key, api_version=api_version, azure_endpoint=api_endpoint
+        )
         self.model = model
 
     def get_text_embedding(self, text: str):
-        embeddings = self.client.embeddings.create(input=[text], model=self.model).data[0].embedding
+        embeddings = (
+            self.client.embeddings.create(input=[text], model=self.model)
+            .data[0]
+            .embedding
+        )
         return embeddings
 
 
 class OllamaEmbeddings:
-
     # Format:
     # curl http://localhost:11434/api/embeddings -d '{
     #   "model": "mxbai-embed-large",
@@ -171,7 +256,9 @@ def query_embedding(embedding_model, query_text: str):
     """Generate padded embedding for querying database"""
     query_vec = embedding_model.get_text_embedding(query_text)
     query_vec = np.array(query_vec)
-    query_vec = np.pad(query_vec, (0, MAX_EMBEDDING_DIM - query_vec.shape[0]), mode="constant").tolist()
+    query_vec = np.pad(
+        query_vec, (0, MAX_EMBEDDING_DIM - query_vec.shape[0]), mode="constant"
+    ).tolist()
     return query_vec
 
 
@@ -184,12 +271,27 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
     from mirix.settings import model_settings
 
     if endpoint_type == "openai":
-        from llama_index.embeddings.openai import OpenAIEmbedding
         from mirix.services.provider_manager import ProviderManager
 
-        # Check for database-stored API key first, fall back to model_settings
-        override_key = ProviderManager().get_openai_override_key()
-        api_key = override_key if override_key else model_settings.openai_api_key
+        custom_api_key = getattr(config, "api_key", None)
+        if custom_api_key:
+            api_key = custom_api_key
+        else:
+            # Check for database-stored API key first, fall back to model_settings
+            override_key = ProviderManager().get_openai_override_key()
+            api_key = override_key if override_key else model_settings.openai_api_key
+
+        # Use direct OpenAI SDK if auth_provider is configured
+        if hasattr(config, "auth_provider") and config.auth_provider:
+            logger.info(
+                f"Using OpenAI embedding with auth provider: {config.auth_provider}"
+            )
+            return OpenAIEmbeddingWithCustomAuth(
+                config=config, auth_provider=config.auth_provider
+            )
+
+        # Otherwise use llama_index (backwards compatible)
+        from llama_index.embeddings.openai import OpenAIEmbedding
 
         additional_kwargs = {"user_id": user_id} if user_id else {}
         model = OpenAIEmbedding(
@@ -202,12 +304,17 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
     elif endpoint_type == "google_ai":
         # Use Google AI (Gemini) for embeddings
         from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+
         from mirix.services.provider_manager import ProviderManager
-        
-        # Check for database-stored API key first, fall back to model_settings
-        override_key = ProviderManager().get_gemini_override_key()
-        api_key = override_key if override_key else model_settings.gemini_api_key
-        
+
+        custom_api_key = getattr(config, "api_key", None)
+        if custom_api_key:
+            api_key = custom_api_key
+        else:
+            # Check for database-stored API key first, fall back to model_settings
+            override_key = ProviderManager().get_gemini_override_key()
+            api_key = override_key if override_key else model_settings.gemini_api_key
+
         model = GoogleGenAIEmbedding(
             model_name=config.embedding_model,
             api_key=api_key,
@@ -216,11 +323,14 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
         return model
 
     elif endpoint_type == "azure":
+        api_key = getattr(config, "api_key", None) or model_settings.azure_api_key
+        api_endpoint = config.azure_endpoint or model_settings.azure_base_url
+        api_version = config.azure_version or model_settings.azure_api_version
         assert all(
             [
-                model_settings.azure_api_key is not None,
-                model_settings.azure_base_url is not None,
-                model_settings.azure_api_version is not None,
+                api_key is not None,
+                api_endpoint is not None,
+                api_version is not None,
             ]
         )
         # from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
@@ -237,9 +347,9 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
         # )
 
         return AzureOpenAIEmbedding(
-            api_endpoint=model_settings.azure_base_url,
-            api_key=model_settings.azure_api_key,
-            api_version=model_settings.azure_api_version,
+            api_endpoint=api_endpoint,
+            api_key=api_key,
+            api_version=api_version,
             model=config.embedding_model,
         )
 
@@ -250,7 +360,6 @@ def embedding_model(config: EmbeddingConfig, user_id: Optional[uuid.UUID] = None
             user=user_id,
         )
     elif endpoint_type == "ollama":
-
         model = OllamaEmbeddings(
             model=config.embedding_model,
             base_url=config.embedding_endpoint,

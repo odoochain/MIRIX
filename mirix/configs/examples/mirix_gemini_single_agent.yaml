@@ -1,0 +1,47 @@
+# Mirix Configuration - Google Gemini Setup
+
+llm_config:
+  model: "gemini-3-flash-preview"
+  model_endpoint_type: "google_ai"
+  model_endpoint: "https://generativelanguage.googleapis.com"
+  context_window: 1000000
+
+# Optional: separate model for topic extraction
+topic_extraction_llm_config:
+  model: "gemini-3-flash-preview"
+  model_endpoint_type: "google_ai"
+  model_endpoint: "https://generativelanguage.googleapis.com"
+  context_window: 1000000
+  # Local OpenAI-compatible (LM Studio / vLLM):
+  # model: "your-local-model"
+  # model_endpoint_type: "openai"
+  # model_endpoint: "http://localhost:1234/v1"
+  # is_local_model: true
+  # context_window: 8192
+  # Ollama (local):
+  # model: "llama3.2"
+  # model_endpoint_type: "ollama"
+  # model_endpoint: "http://localhost:11434"
+  # context_window: 8192
+
+build_embeddings_for_memory: true
+
+embedding_config:
+  embedding_model: "gemini-embedding-001"
+  embedding_endpoint_type: "google_ai"
+  embedding_endpoint: "https://generativelanguage.googleapis.com"
+  embedding_dim: 768
+
+meta_agent_config:
+  system_prompts_folder: mirix\prompts\system\base
+  memory:
+    core:
+      - label: "human"
+        value: ""
+      - label: "persona"
+        value: "I am a helpful assistant."
+    # Memory decay - controls automatic aging and cleanup
+    decay:
+      fade_after_days: 30     # Memories older than this become inactive (excluded from retrieval)
+      expire_after_days: 90   # Memories older than this are permanently deleted
+

@@ -3,20 +3,29 @@ import warnings
 from typing import List, Optional
 
 from mirix.constants import (
-    CORE_MEMORY_TOOLS, BASE_TOOLS, 
-    EPISODIC_MEMORY_TOOLS, CHAT_AGENT_TOOLS, EXTRAS_TOOLS,
-    PROCEDURAL_MEMORY_TOOLS, RESOURCE_MEMORY_TOOLS,
-    KNOWLEDGE_VAULT_TOOLS, META_MEMORY_TOOLS, SEMANTIC_MEMORY_TOOLS, UNIVERSAL_MEMORY_TOOLS, ALL_TOOLS, MCP_TOOLS
+    ALL_TOOLS,
+    BASE_TOOLS,
+    CHAT_AGENT_TOOLS,
+    CORE_MEMORY_TOOLS,
+    EPISODIC_MEMORY_TOOLS,
+    EXTRAS_TOOLS,
+    KNOWLEDGE_MEMORY_TOOLS,
+    MCP_TOOLS,
+    META_MEMORY_TOOLS,
+    PROCEDURAL_MEMORY_TOOLS,
+    RESOURCE_MEMORY_TOOLS,
+    SEMANTIC_MEMORY_TOOLS,
+    UNIVERSAL_MEMORY_TOOLS,
 )
 from mirix.functions.functions import derive_openai_json_schema, load_function_set
-from mirix.orm.enums import ToolType
+from mirix.schemas.enums import ToolType
 
 # TODO: Remove this once we translate all of these to the ORM
 from mirix.orm.errors import NoResultFound
 from mirix.orm.tool import Tool as ToolModel
 from mirix.schemas.tool import Tool as PydanticTool
 from mirix.schemas.tool import ToolUpdate
-from mirix.schemas.user import User as PydanticUser
+from mirix.schemas.client import Client as PydanticClient
 from mirix.utils import enforce_types, printd
 
 
@@ -31,13 +40,17 @@ class ToolManager:
 
     # TODO: Refactor this across the codebase to use CreateTool instead of passing in a Tool object
     @enforce_types
-    def create_or_update_tool(self, pydantic_tool: PydanticTool, actor: PydanticUser) -> PydanticTool:
+    def create_or_update_tool(
+        self, pydantic_tool: PydanticTool, actor: PydanticClient
+    ) -> PydanticTool:
         """Create a new tool based on the ToolCreate schema."""
 
         tool = self.get_tool_by_name(tool_name=pydantic_tool.name, actor=actor)
         if tool:
             # Put to dict and remove fields that should not be reset
-            update_data = pydantic_tool.model_dump(exclude_unset=True, exclude_none=True)
+            update_data = pydantic_tool.model_dump(
+                exclude_unset=True, exclude_none=True
+            )
 
             # If there's anything to update
             if update_data:
@@ -52,14 +65,18 @@ class ToolManager:
         return tool
 
     @enforce_types
-    def create_tool(self, pydantic_tool: PydanticTool, actor: PydanticUser) -> PydanticTool:
+    def create_tool(
+        self, pydantic_tool: PydanticTool, actor: PydanticClient
+    ) -> PydanticTool:
         """Create a new tool based on the ToolCreate schema."""
         with self.session_maker() as session:
             # Set the organization id at the ORM layer
             pydantic_tool.organization_id = actor.organization_id
             # Auto-generate description if not provided
             if pydantic_tool.description is None:
-                pydantic_tool.description = pydantic_tool.json_schema.get("description", None)
+                pydantic_tool.description = pydantic_tool.json_schema.get(
+                    "description", None
+                )
             tool_data = pydantic_tool.model_dump()
 
             tool = ToolModel(**tool_data)
@@ -67,7 +84,7 @@ class ToolManager:
         return tool.to_pydantic()
 
     @enforce_types
-    def get_tool_by_id(self, tool_id: str, actor: PydanticUser) -> PydanticTool:
+    def get_tool_by_id(self, tool_id: str, actor: PydanticClient) -> PydanticTool:
         """Fetch a tool by its ID."""
         with self.session_maker() as session:
             # Retrieve tool by id using the Tool model's read method
@@ -76,7 +93,9 @@ class ToolManager:
             return tool.to_pydantic()
 
     @enforce_types
-    def get_tool_by_name(self, tool_name: str, actor: PydanticUser) -> Optional[PydanticTool]:
+    def get_tool_by_name(
+        self, tool_name: str, actor: PydanticClient
+    ) -> Optional[PydanticTool]:
         """Retrieve a tool by its name and a user. We derive the organization from the user, and retrieve that tool."""
         try:
             with self.session_maker() as session:
@@ -86,7 +105,12 @@ class ToolManager:
             return None
 
     @enforce_types
-    def list_tools(self, actor: PydanticUser, cursor: Optional[str] = None, limit: Optional[int] = 50) -> List[PydanticTool]:
+    def list_tools(
+        self,
+        actor: PydanticClient,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = 50,
+    ) -> List[PydanticTool]:
         """List all tools with optional pagination using cursor and limit."""
         with self.session_maker() as session:
             tools = ToolModel.list(
@@ -98,7 +122,9 @@ class ToolManager:
             return [tool.to_pydantic() for tool in tools]
 
     @enforce_types
-    def update_tool_by_id(self, tool_id: str, tool_update: ToolUpdate, actor: PydanticUser) -> PydanticTool:
+    def update_tool_by_id(
+        self, tool_id: str, tool_update: ToolUpdate, actor: PydanticClient
+    ) -> PydanticTool:
         """Update a tool by its ID with the given ToolUpdate object."""
         with self.session_maker() as session:
             # Fetch the tool by ID
@@ -110,9 +136,14 @@ class ToolManager:
                 setattr(tool, key, value)
 
             # If source code is changed and a new json_schema is not provided, we want to auto-refresh the schema
-            if "source_code" in update_data.keys() and "json_schema" not in update_data.keys():
+            if (
+                "source_code" in update_data.keys()
+                and "json_schema" not in update_data.keys()
+            ):
                 pydantic_tool = tool.to_pydantic()
-                new_schema = derive_openai_json_schema(source_code=pydantic_tool.source_code)
+                new_schema = derive_openai_json_schema(
+                    source_code=pydantic_tool.source_code
+                )
 
                 tool.json_schema = new_schema
 
@@ -120,17 +151,21 @@ class ToolManager:
             return tool.update(db_session=session, actor=actor).to_pydantic()
 
     @enforce_types
-    def delete_tool_by_id(self, tool_id: str, actor: PydanticUser) -> None:
+    def delete_tool_by_id(self, tool_id: str, actor: PydanticClient) -> None:
         """Delete a tool by its ID."""
         with self.session_maker() as session:
             try:
-                tool = ToolModel.read(db_session=session, identifier=tool_id, actor=actor)
+                tool = ToolModel.read(
+                    db_session=session, identifier=tool_id, actor=actor
+                )
                 tool.hard_delete(db_session=session, actor=actor)
             except NoResultFound:
                 raise ValueError(f"Tool with id {tool_id} not found.")
 
     @enforce_types
-    def upsert_base_tools(self, actor: PydanticUser) -> List[PydanticTool]:
+    def upsert_base_tools(
+        self, actor: PydanticClient, force_reload: bool = False
+    ) -> List[PydanticTool]:
         """Add default tools in base.py"""
         functions_to_schema = {}
         module_names = ["base", "memory_tools", "extras"]
@@ -138,7 +173,11 @@ class ToolManager:
         for module_name in module_names:
             full_module_name = f"mirix.functions.function_sets.{module_name}"
             try:
+                if force_reload:
+                    importlib.invalidate_caches()
                 module = importlib.import_module(full_module_name)
+                if force_reload:
+                    module = importlib.reload(module)
             except Exception as e:
                 # Handle other general exceptions
                 raise e
@@ -158,19 +197,37 @@ class ToolManager:
                 if name in BASE_TOOLS:
                     tool_type = ToolType.MIRIX_CORE
                     tags = [tool_type.value]
-                elif name in CORE_MEMORY_TOOLS + EPISODIC_MEMORY_TOOLS + PROCEDURAL_MEMORY_TOOLS + RESOURCE_MEMORY_TOOLS + KNOWLEDGE_VAULT_TOOLS + META_MEMORY_TOOLS + SEMANTIC_MEMORY_TOOLS + UNIVERSAL_MEMORY_TOOLS + CHAT_AGENT_TOOLS:
+                elif (
+                    name
+                    in CORE_MEMORY_TOOLS
+                    + EPISODIC_MEMORY_TOOLS
+                    + PROCEDURAL_MEMORY_TOOLS
+                    + RESOURCE_MEMORY_TOOLS
+                    + KNOWLEDGE_MEMORY_TOOLS
+                    + META_MEMORY_TOOLS
+                    + SEMANTIC_MEMORY_TOOLS
+                    + UNIVERSAL_MEMORY_TOOLS
+                    + CHAT_AGENT_TOOLS
+                ):
                     tool_type = ToolType.MIRIX_MEMORY_CORE
                     tags = [tool_type.value]
                 elif name in EXTRAS_TOOLS:
                     tool_type = ToolType.MIRIX_EXTRA
                     tags = [tool_type.value]
                 elif name in MCP_TOOLS:
-                    tool_type = ToolType.MIRIX_EXTRA  # MCP wrapper tools are treated as EXTRA tools (currently none)
+                    tool_type = (
+                        ToolType.MIRIX_EXTRA
+                    )  # MCP wrapper tools are treated as EXTRA tools (currently none)
                     tags = [tool_type.value, "mcp_wrapper"]
                 else:
                     raise ValueError(
-                        f"Tool name {name} is not in the list of tool names: {BASE_TOOLS + CORE_MEMORY_TOOLS + EPISODIC_MEMORY_TOOLS + PROCEDURAL_MEMORY_TOOLS + KNOWLEDGE_VAULT_TOOLS + RESOURCE_MEMORY_TOOLS + META_MEMORY_TOOLS + SEMANTIC_MEMORY_TOOLS + UNIVERSAL_MEMORY_TOOLS + CHAT_AGENT_TOOLS + EXTRAS_TOOLS + MCP_TOOLS}"
+                        f"Tool name {name} is not in the list of tool names: {BASE_TOOLS + CORE_MEMORY_TOOLS + EPISODIC_MEMORY_TOOLS + PROCEDURAL_MEMORY_TOOLS + KNOWLEDGE_MEMORY_TOOLS + RESOURCE_MEMORY_TOOLS + META_MEMORY_TOOLS + SEMANTIC_MEMORY_TOOLS + UNIVERSAL_MEMORY_TOOLS + CHAT_AGENT_TOOLS + EXTRAS_TOOLS + MCP_TOOLS}"
                     )
+
+                schema_data = functions_to_schema.get(name)
+                json_schema = (
+                    schema_data.get("json_schema") if schema_data else None
+                )
 
                 # create to tool
                 tools.append(
@@ -180,6 +237,7 @@ class ToolManager:
                             tags=tags,
                             source_type="python",
                             tool_type=tool_type,
+                            json_schema=json_schema,
                         ),
                         actor=actor,
                     )

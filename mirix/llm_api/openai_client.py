@@ -1,8 +1,6 @@
-import os
-import json
 import base64
+import os
 from typing import List, Optional
-from mirix.utils import parse_json
 
 import openai
 from openai import AsyncOpenAI, AsyncStream, OpenAI, Stream
@@ -20,18 +18,21 @@ from mirix.errors import (
     LLMServerError,
     LLMUnprocessableEntityError,
 )
-from mirix.llm_api.helpers import add_inner_thoughts_to_functions, convert_to_structured_output, unpack_all_inner_thoughts_from_kwargs
+from mirix.llm_api.helpers import convert_to_structured_output
 from mirix.llm_api.llm_client_base import LLMClientBase
-from mirix.constants import INNER_THOUGHTS_KWARG, INNER_THOUGHTS_KWARG_DESCRIPTION, INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST
 from mirix.log import get_logger
 from mirix.schemas.llm_config import LLMConfig
 from mirix.schemas.message import Message as PydanticMessage
 from mirix.schemas.openai.chat_completion_request import ChatCompletionRequest
-from mirix.schemas.openai.chat_completion_request import FunctionCall as ToolFunctionChoiceFunctionCall
+from mirix.schemas.openai.chat_completion_request import (
+    FunctionCall as ToolFunctionChoiceFunctionCall,
+)
 from mirix.schemas.openai.chat_completion_request import FunctionSchema
 from mirix.schemas.openai.chat_completion_request import Tool as OpenAITool
-from mirix.schemas.openai.chat_completion_request import ToolFunctionChoice, cast_message_to_subtype
-from mirix.schemas.openai.chat_completion_request import UserMessage
+from mirix.schemas.openai.chat_completion_request import (
+    ToolFunctionChoice,
+    cast_message_to_subtype,
+)
 from mirix.schemas.openai.chat_completion_response import ChatCompletionResponse
 from mirix.services.provider_manager import ProviderManager
 from mirix.settings import model_settings
@@ -42,39 +43,134 @@ logger = get_logger(__name__)
 def encode_image(image_path: str) -> str:
     """
     Encode an image file to base64 format with data URL prefix.
-    
+
     Args:
         image_path: Path to the image file
-        
+
     Returns:
         Base64 encoded image with data URL prefix (e.g., "data:image/jpeg;base64,...")
     """
     import mimetypes
-    
+
     # Get the MIME type of the image
     mime_type, _ = mimetypes.guess_type(image_path)
-    if mime_type is None or not mime_type.startswith('image/'):
+    if mime_type is None or not mime_type.startswith("image/"):
         # Default to jpeg if we can't determine the type
-        mime_type = 'image/jpeg'
-    
+        mime_type = "image/jpeg"
+
     with open(image_path, "rb") as img_file:
         base64_string = base64.b64encode(img_file.read()).decode("utf-8")
         return f"data:{mime_type};base64,{base64_string}"
 
 
 class OpenAIClient(LLMClientBase):
+    
+    def _supports_named_tool_choice(self) -> bool:
+        """
+        Determine if the model supports OpenAI's named tool_choice format.
+        
+        OpenAI's specific format allows forcing a particular function:
+        {"type": "function", "function": {"name": "function_name"}}
+        
+        Many OpenAI-compatible endpoints (vLLM, LM Studio, Ollama, etc.) only support
+        string values: "none", "auto", "required"
+        
+        Returns:
+            bool: True if the model supports named tool choice, False otherwise
+        """
+        # Official OpenAI endpoints support the object format
+        if self.llm_config.model_endpoint and "api.openai.com" in self.llm_config.model_endpoint:
+            return True
+        
+        # Azure OpenAI also supports it
+        if self.llm_config.model_endpoint_type == "azure_openai":
+            return True
+            
+        # All other endpoints use the simpler string format
+        return False
+    
+    def _get_tool_choice(
+        self, 
+        tools: Optional[List], 
+        force_tool_call: Optional[str]
+    ) -> Optional[str | ToolFunctionChoice]:
+        """
+        Determine the appropriate tool_choice parameter based on model capabilities.
+        
+        Args:
+            tools: List of available tools/functions
+            force_tool_call: Name of a specific function to force call (if any)
+            
+        Returns:
+            None, a string ("none", "auto", "required"), or a ToolFunctionChoice object
+        """
+        if not tools:
+            return None
+        
+        # Check for vLLM first - it has issues with "required", use "auto" instead
+        if self.llm_config.handle and "vllm" in self.llm_config.handle:
+            # vLLM doesn't support "required" well, use "auto"
+            return "auto"
+
+        # Handle forced tool calls
+        if force_tool_call is not None:
+            if self._supports_named_tool_choice():
+                # Use OpenAI's specific format to force a particular function
+                return ToolFunctionChoice(
+                    type="function",
+                    function=ToolFunctionChoiceFunctionCall(name=force_tool_call),
+                )
+            
+        # Default: require a tool call when tools are available
+        return "required"
+    
     def _prepare_client_kwargs(self) -> dict:
         # Check for custom API key in LLMConfig first (for custom models)
-        custom_api_key = getattr(self.llm_config, 'api_key', None)
+        custom_api_key = getattr(self.llm_config, "api_key", None)
         if custom_api_key:
             api_key = custom_api_key
         else:
             # Check for database-stored API key first, fall back to model_settings and environment
             override_key = ProviderManager().get_openai_override_key()
-            api_key = override_key or model_settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
+            api_key = (
+                override_key
+                or model_settings.openai_api_key
+                or os.environ.get("OPENAI_API_KEY")
+            )
             # supposedly the openai python client requires a dummy API key
             api_key = api_key or "DUMMY_API_KEY"
+
         kwargs = {"api_key": api_key, "base_url": self.llm_config.model_endpoint}
+
+        headers = {}
+        # Add auth provider headers
+        if hasattr(self.llm_config, "auth_provider") and self.llm_config.auth_provider:
+            from mirix.llm_api.auth_provider import get_auth_provider
+
+            auth_provider = get_auth_provider(self.llm_config.auth_provider)
+            if auth_provider:
+                try:
+                    auth_headers = auth_provider.get_auth_headers()  # Sync call
+                    logger.debug(
+                        f"OpenAI Client - Using auth provider '{self.llm_config.auth_provider}' "
+                        f"to inject {len(auth_headers)} header(s)"
+                    )
+                    headers.update(auth_headers)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to get auth headers from provider '{self.llm_config.auth_provider}': {e}"
+                    )
+                    # Continue without auth headers rather than failing the request
+            else:
+                logger.warning(
+                    f"Auth provider '{self.llm_config.auth_provider}' not found in registry. "
+                    "Make sure to register it before using."
+                )
+
+        # Set headers if any were collected
+        if headers:
+            kwargs["default_headers"] = headers
+
         return kwargs
 
     def build_request_data(
@@ -88,25 +184,20 @@ class OpenAIClient(LLMClientBase):
         """
         Constructs a request object in the expected data format for the OpenAI API.
         """
-        if tools and llm_config.put_inner_thoughts_in_kwargs:
-            # Special case for LM Studio backend since it needs extra guidance to force out the thoughts first
-            # TODO(fix)
-            inner_thoughts_desc = (
-                INNER_THOUGHTS_KWARG_DESCRIPTION_GO_FIRST if ":1234" in llm_config.model_endpoint else INNER_THOUGHTS_KWARG_DESCRIPTION
-            )
-            tools = add_inner_thoughts_to_functions(
-                functions=tools,
-                inner_thoughts_key=INNER_THOUGHTS_KWARG,
-                inner_thoughts_description=inner_thoughts_desc,
-                put_inner_thoughts_first=True,
-            )
 
-        use_developer_message = llm_config.model.startswith("o1") or llm_config.model.startswith("o3")  # o-series models
+        # Check if this is a reasoning model (o-series: o1, o3, o4, and gpt-5)
+        is_reasoning_model = (
+            llm_config.model.startswith("o1")
+            or llm_config.model.startswith("o3")
+            or llm_config.model.startswith("o4")
+            or llm_config.model.startswith("gpt-5")
+        )
+
+        use_developer_message = is_reasoning_model  # reasoning models use developer role
 
         openai_message_list = [
             cast_message_to_subtype(
                 m.to_openai_dict(
-                    put_inner_thoughts_in_kwargs=llm_config.put_inner_thoughts_in_kwargs,
                     use_developer_message=use_developer_message,
                 )
             )
@@ -116,53 +207,64 @@ class OpenAIClient(LLMClientBase):
         if llm_config.model:
             model = llm_config.model
         else:
-            logger.warning(f"Model type not set in llm_config: {llm_config.model_dump_json(indent=4)}")
+            logger.warning(
+                f"Model type not set in llm_config: {llm_config.model_dump_json(indent=4)}"
+            )
             model = None
 
-        # force function calling for reliability, see https://platform.openai.com/docs/api-reference/chat/create#chat-create-tool_choice
-        # TODO(matt) move into LLMConfig
-        # TODO: This vllm checking is very brittle and is a patch at most
-        tool_choice = None
-        if llm_config.model_endpoint == "https://inference.memgpt.ai" or (llm_config.handle and "vllm" in self.llm_config.handle):
-            tool_choice = "auto"  # TODO change to "required" once proxy supports it
-        elif tools:
-            # only set if tools is non-Null
-            tool_choice = "required"
+        # Determine the appropriate tool_choice based on model capabilities
+        tool_choice = self._get_tool_choice(tools, force_tool_call)
 
-        if force_tool_call is not None:
-            tool_choice = ToolFunctionChoice(type="function", function=ToolFunctionChoiceFunctionCall(name=force_tool_call))
+        request_kwargs = {
+            "model": model,
+            "messages": self.fill_image_content_in_messages(openai_message_list),
+            "tools": (
+                [OpenAITool(type="function", function=f) for f in tools]
+                if tools
+                else None
+            ),
+            "tool_choice": tool_choice,
+            "user": str(),
+            "max_completion_tokens": llm_config.max_tokens,
+        }
 
-        data = ChatCompletionRequest(
-            model=model,
-            messages=self.fill_image_content_in_messages(openai_message_list),
-            tools=[OpenAITool(type="function", function=f) for f in tools] if tools else None,
-            tool_choice=tool_choice,
-            user=str(),
-            max_completion_tokens=llm_config.max_tokens,
-            temperature=llm_config.temperature,
-        )
+        # gpt-5 does not support temperature
+        if not (model and model.startswith("gpt-5")):
+            request_kwargs["temperature"] = llm_config.temperature
 
-        if "inference.memgpt.ai" in llm_config.model_endpoint:
-            # override user id for inference.memgpt.ai
-            import uuid
-
-            data.user = str(uuid.UUID(int=0))
-            data.model = "memgpt-openai"
+        data = ChatCompletionRequest(**request_kwargs)
 
         if data.tools is not None and len(data.tools) > 0:
             # Convert to structured output style (which has 'strict' and no optionals)
             for tool in data.tools:
                 try:
-                    structured_output_version = convert_to_structured_output(tool.function.model_dump())
+                    structured_output_version = convert_to_structured_output(
+                        tool.function.model_dump()
+                    )
                     tool.function = FunctionSchema(**structured_output_version)
                 except ValueError as e:
-                    logger.warning(f"Failed to convert tool function to structured output, tool={tool}, error={e}")
+                    logger.warning(
+                        f"Failed to convert tool function to structured output, tool={tool}, error={e}"
+                    )
 
         else:
             # When there are no tools, delete tool_choice entirely from the request
-            delattr(data, 'tool_choice')
+            delattr(data, "tool_choice")
 
-        return data.model_dump(exclude_unset=True)
+        request_data = data.model_dump(exclude_unset=True)
+
+        # Add reasoning configuration for o1/o3 models
+        if is_reasoning_model and llm_config.enable_reasoner:
+            # Add reasoning_effort if specified
+            if llm_config.reasoning_effort:
+                request_data["reasoning_effort"] = llm_config.reasoning_effort
+            # Note: OpenAI reasoning models don't need explicit thinking budget like Anthropic
+            # The reasoning is handled internally by the model
+            logger.debug(
+                f"OpenAI reasoning model enabled: {model}, reasoning_effort: {llm_config.reasoning_effort}"
+            )
+
+        return request_data
 
     def fill_image_content_in_messages(self, openai_message_list):
         """
@@ -174,11 +276,10 @@ class OpenAIClient(LLMClientBase):
         global_image_idx = 0
         new_message_list = []
 
-        image_content_loaded = False # it will always be false if `LOAD_IMAGE_CONTENT_FOR_LAST_MESSAGE_ONLY` is False
+        image_content_loaded = False  # it will always be false if `LOAD_IMAGE_CONTENT_FOR_LAST_MESSAGE_ONLY` is False
 
         for message_idx, message in enumerate(openai_message_list[::-1]):
-
-            if message.role != 'user':
+            if message.role != "user":
                 new_message_list.append(message)
                 continue
 
@@ -192,53 +293,82 @@ class OpenAIClient(LLMClientBase):
 
             message_content = []
             for m in message.content:
-                if m['type'] == 'image_url':
-                    if LOAD_IMAGE_CONTENT_FOR_LAST_MESSAGE_ONLY and image_content_loaded:
-                        message_content.append({
-                            'type': 'text',
-                            'text': "[System Message] There was an image here but now the image has been deleted to save space.",
-                        })
+                if m["type"] == "image_url":
+                    if (
+                        LOAD_IMAGE_CONTENT_FOR_LAST_MESSAGE_ONLY
+                        and image_content_loaded
+                    ):
+                        message_content.append(
+                            {
+                                "type": "text",
+                                "text": "[System Message] There was an image here but now the image has been deleted to save space.",
+                            }
+                        )
 
                     else:
-                        message_content.append({
-                            'type': 'text',
-                            'text': f"<image {global_image_idx}>",
-                        })
-                        file = self.file_manager.get_file_metadata_by_id(m['image_id'])
+                        message_content.append(
+                            {
+                                "type": "text",
+                                "text": f"<image {global_image_idx}>",
+                            }
+                        )
+                        file = self.file_manager.get_file_metadata_by_id(m["image_id"])
                         if file.source_url is not None:
-                            message_content.append({
-                                'type': 'image_url',
-                                'image_url': {'url': file.source_url, 'detail': m['detail']},
-                            })
+                            message_content.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": file.source_url,
+                                        "detail": m["detail"],
+                                    },
+                                }
+                            )
                         elif file.file_path is not None:
-                            message_content.append({
-                                'type': 'image_url',
-                                'image_url': {'url': encode_image(file.file_path), 'detail': m['detail']},
-                            })
+                            message_content.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": encode_image(file.file_path),
+                                        "detail": m["detail"],
+                                    },
+                                }
+                            )
                         else:
-                            raise ValueError(f"File {file.file_path} has no source_url or file_path")
+                            raise ValueError(
+                                f"File {file.file_path} has no source_url or file_path"
+                            )
                         global_image_idx += 1
                         has_image = True
-                elif m['type'] == 'google_cloud_file_uri':
-                    file = self.file_manager.get_file_metadata_by_id(m['cloud_file_uri'])
+                elif m["type"] == "google_cloud_file_uri":
+                    file = self.file_manager.get_file_metadata_by_id(
+                        m["cloud_file_uri"]
+                    )
                     try:
-                        local_path = self.cloud_file_mapping_manager.get_local_file(file.google_cloud_url)
-                    except Exception as e:
+                        local_path = self.cloud_file_mapping_manager.get_local_file(
+                            file.google_cloud_url
+                        )
+                    except Exception:
                         local_path = None
 
                     if local_path is not None and os.path.exists(local_path):
-                        message_content.append({
-                            'type': 'image_url',
-                            'image_url': {'url': encode_image(local_path)},
-                        })
+                        message_content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": encode_image(local_path)},
+                            }
+                        )
                     else:
-                        message_content.append({
-                            'type': 'text',
-                            'text': f"[System Message] There was an image here but now the image has been deleted to save space.",
-                        })
-                    
-                elif m['type'] == 'file_uri':
-                    raise NotImplementedError("File URI is currently not supported for OpenAI")
+                        message_content.append(
+                            {
+                                "type": "text",
+                                "text": "[System Message] There was an image here but now the image has been deleted to save space.",
+                            }
+                        )
+
+                elif m["type"] == "file_uri":
+                    raise NotImplementedError(
+                        "File URI is currently not supported for OpenAI"
+                    )
                 else:
                     message_content.append(m)
             message.content = message_content
@@ -248,7 +378,7 @@ class OpenAIClient(LLMClientBase):
                 if LOAD_IMAGE_CONTENT_FOR_LAST_MESSAGE_ONLY:
                     # Load image content for the last message only.
                     image_content_loaded = True
-        
+
         new_message_list = new_message_list[::-1]
 
         return new_message_list
@@ -257,38 +387,54 @@ class OpenAIClient(LLMClientBase):
         """
         Performs underlying synchronous request to OpenAI API and returns raw response dict.
         """
-        client = OpenAI(**self._prepare_client_kwargs())
+        client_kwargs = self._prepare_client_kwargs()
+        logger.debug(
+            f"OpenAI Request - Making request to {client_kwargs.get('base_url')}"
+        )
+        logger.debug(
+            f"OpenAI Request - Model: {request_data.get('model')}, Max tokens: {request_data.get('max_completion_tokens')}, Temperature: {request_data.get('temperature')}"
+        )
+        if "default_headers" in client_kwargs:
+            logger.debug(
+                f"OpenAI Request - Custom headers will be included in request (count: {len(client_kwargs['default_headers'])})"
+            )
+
+        client = OpenAI(**client_kwargs)
         response: ChatCompletion = client.chat.completions.create(**request_data)
         if not response.object:
-            response.object = 'chat.completion'
+            response.object = "chat.completion"
         return response.model_dump()
 
     async def request_async(self, request_data: dict) -> dict:
         """
         Performs underlying asynchronous request to OpenAI API and returns raw response dict.
         """
-        client = AsyncOpenAI(**self._prepare_client_kwargs())
+        client_kwargs = self._prepare_client_kwargs()
+        client = AsyncOpenAI(**client_kwargs)
         response: ChatCompletion = await client.chat.completions.create(**request_data)
         return response.model_dump()
 
     def convert_response_to_chat_completion(
         self,
         response_data: dict,
-        input_messages: List[PydanticMessage],  # Included for consistency, maybe used later
+        input_messages: List[
+            PydanticMessage
+        ],  # Included for consistency, maybe used later
     ) -> ChatCompletionResponse:
         """
         Converts raw OpenAI response dict into the ChatCompletionResponse Pydantic model.
-        Handles potential extraction of inner thoughts if they were added via kwargs.
+        Handles reasoning content for o1/o3 models.
         """
         # OpenAI's response structure directly maps to ChatCompletionResponse
-        # We just need to instantiate the Pydantic model for validation and type safety.
+        # For reasoning models, the response may include reasoning_content in message
         chat_completion_response = ChatCompletionResponse(**response_data)
 
-        # Unpack inner thoughts if they were embedded in function arguments
-        if self.llm_config.put_inner_thoughts_in_kwargs:
-            chat_completion_response = unpack_all_inner_thoughts_from_kwargs(
-                response=chat_completion_response, inner_thoughts_key=INNER_THOUGHTS_KWARG
-            )
+        # Log reasoning content if present (for debugging/observability)
+        for choice in chat_completion_response.choices:
+            if choice.message.reasoning_content:
+                logger.debug(
+                    f"OpenAI reasoning content received: {len(choice.message.reasoning_content)} chars"
+                )
 
         return chat_completion_response
 
@@ -297,15 +443,22 @@ class OpenAIClient(LLMClientBase):
         Performs underlying streaming request to OpenAI and returns the stream iterator.
         """
         client = OpenAI(**self._prepare_client_kwargs())
-        response_stream: Stream[ChatCompletionChunk] = client.chat.completions.create(**request_data, stream=True)
+        response_stream: Stream[ChatCompletionChunk] = client.chat.completions.create(
+            **request_data, stream=True
+        )
         return response_stream
 
-    async def stream_async(self, request_data: dict) -> AsyncStream[ChatCompletionChunk]:
+    async def stream_async(
+        self, request_data: dict
+    ) -> AsyncStream[ChatCompletionChunk]:
         """
         Performs underlying asynchronous streaming request to OpenAI and returns the async stream iterator.
         """
-        client = AsyncOpenAI(**self._prepare_client_kwargs())
-        response_stream: AsyncStream[ChatCompletionChunk] = await client.chat.completions.create(**request_data, stream=True)
+        client_kwargs = self._prepare_client_kwargs()
+        client = AsyncOpenAI(**client_kwargs)
+        response_stream: AsyncStream[ChatCompletionChunk] = (
+            await client.chat.completions.create(**request_data, stream=True)
+        )
         return response_stream
 
     def handle_llm_error(self, e: Exception) -> Exception:
@@ -313,7 +466,7 @@ class OpenAIClient(LLMClientBase):
         Maps OpenAI-specific errors to common LLMError types.
         """
         if isinstance(e, openai.APIConnectionError):
-            logger.warning(f"[OpenAI] API connection error: {e}")
+            logger.warning("[OpenAI] API connection error: %s", e)
             return LLMConnectionError(
                 message=f"Failed to connect to OpenAI: {str(e)}",
                 code=ErrorCode.INTERNAL_SERVER_ERROR,
@@ -321,7 +474,9 @@ class OpenAIClient(LLMClientBase):
             )
 
         if isinstance(e, openai.RateLimitError):
-            logger.warning(f"[OpenAI] Rate limited (429). Consider backoff. Error: {e}")
+            logger.warning(
+                "[OpenAI] Rate limited (429). Consider backoff. Error: %s", e
+            )
             return LLMRateLimitError(
                 message=f"Rate limited by OpenAI: {str(e)}",
                 code=ErrorCode.RATE_LIMIT_EXCEEDED,
@@ -329,7 +484,7 @@ class OpenAIClient(LLMClientBase):
             )
 
         if isinstance(e, openai.BadRequestError):
-            logger.warning(f"[OpenAI] Bad request (400): {str(e)}")
+            logger.warning("[OpenAI] Bad request (400): %s", str(e))
             # BadRequestError can signify different issues (e.g., invalid args, context length)
             # Check message content if finer-grained errors are needed
             # Example: if "context_length_exceeded" in str(e): return LLMContextLengthExceededError(...)
@@ -340,24 +495,36 @@ class OpenAIClient(LLMClientBase):
             )
 
         if isinstance(e, openai.AuthenticationError):
-            logger.error(f"[OpenAI] Authentication error (401): {str(e)}")  # More severe log level
+            logger.error(
+                f"[OpenAI] Authentication error (401): {str(e)}"
+            )  # More severe log level
             return LLMAuthenticationError(
-                message=f"Authentication failed with OpenAI: {str(e)}", code=ErrorCode.UNAUTHENTICATED, details=e.body
+                message=f"Authentication failed with OpenAI: {str(e)}",
+                code=ErrorCode.UNAUTHENTICATED,
+                details=e.body,
             )
 
         if isinstance(e, openai.PermissionDeniedError):
-            logger.error(f"[OpenAI] Permission denied (403): {str(e)}")  # More severe log level
+            logger.error(
+                f"[OpenAI] Permission denied (403): {str(e)}"
+            )  # More severe log level
             return LLMPermissionDeniedError(
-                message=f"Permission denied by OpenAI: {str(e)}", code=ErrorCode.PERMISSION_DENIED, details=e.body
+                message=f"Permission denied by OpenAI: {str(e)}",
+                code=ErrorCode.PERMISSION_DENIED,
+                details=e.body,
             )
 
         if isinstance(e, openai.NotFoundError):
-            logger.warning(f"[OpenAI] Resource not found (404): {str(e)}")
+            logger.warning("[OpenAI] Resource not found (404): %s", str(e))
             # Could be invalid model name, etc.
-            return LLMNotFoundError(message=f"Resource not found in OpenAI: {str(e)}", code=ErrorCode.NOT_FOUND, details=e.body)
+            return LLMNotFoundError(
+                message=f"Resource not found in OpenAI: {str(e)}",
+                code=ErrorCode.NOT_FOUND,
+                details=e.body,
+            )
 
         if isinstance(e, openai.UnprocessableEntityError):
-            logger.warning(f"[OpenAI] Unprocessable entity (422): {str(e)}")
+            logger.warning("[OpenAI] Unprocessable entity (422): %s", str(e))
             return LLMUnprocessableEntityError(
                 message=f"Invalid request content for OpenAI: {str(e)}",
                 code=ErrorCode.INVALID_ARGUMENT,  # Usually validation errors
@@ -366,7 +533,7 @@ class OpenAIClient(LLMClientBase):
 
         # General API error catch-all
         if isinstance(e, openai.APIStatusError):
-            logger.warning(f"[OpenAI] API status error ({e.status_code}): {str(e)}")
+            logger.warning("[OpenAI] API status error (%s): %s", e.status_code, str(e))
             # Map based on status code potentially
             if e.status_code >= 500:
                 error_cls = LLMServerError

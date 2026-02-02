@@ -21,7 +21,9 @@ class OrganizationMixin(Base):
 
     __abstract__ = True
 
-    organization_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True)
+    organization_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True
+    )
 
 
 class UserMixin(Base):
@@ -37,12 +39,7 @@ class AgentMixin(Base):
 
     __abstract__ = True
 
-    agent_id: Mapped[str] = mapped_column(String, ForeignKey("agents.id", ondelete="CASCADE"))
+    agent_id: Mapped[str] = mapped_column(
+        String, ForeignKey("agents.id", ondelete="CASCADE")
+    )
 
-
-class SandboxConfigMixin(Base):
-    """Mixin for models that belong to a SandboxConfig."""
-
-    __abstract__ = True
-
-    sandbox_config_id: Mapped[str] = mapped_column(String, ForeignKey("sandbox_configs.id"))

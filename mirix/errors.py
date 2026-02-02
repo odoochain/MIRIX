@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 # Avoid circular imports
 if TYPE_CHECKING:
     from mirix.schemas.message import Message
+    from mirix.schemas.mirix_message import MirixMessage
 
 
 class ErrorCode(Enum):
@@ -13,12 +14,18 @@ class ErrorCode(Enum):
     INTERNAL_SERVER_ERROR = "INTERNAL_SERVER_ERROR"
     CONTEXT_WINDOW_EXCEEDED = "CONTEXT_WINDOW_EXCEEDED"
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
+    INVALID_ARGUMENT = "INVALID_ARGUMENT"
+    UNAUTHENTICATED = "UNAUTHENTICATED"
+    PERMISSION_DENIED = "PERMISSION_DENIED"
+    NOT_FOUND = "NOT_FOUND"
 
 
 class MirixError(Exception):
     """Base class for all Mirix related errors."""
 
-    def __init__(self, message: str, code: Optional[ErrorCode] = None, details: dict = {}):
+    def __init__(
+        self, message: str, code: Optional[ErrorCode] = None, details: dict = {}
+    ):
         self.message = message
         self.code = code
         self.details = details
@@ -47,7 +54,9 @@ class MirixConfigurationError(MirixError):
 
     def __init__(self, message: str, missing_fields: Optional[List[str]] = None):
         self.missing_fields = missing_fields or []
-        super().__init__(message=message, details={"missing_fields": self.missing_fields})
+        super().__init__(
+            message=message, details={"missing_fields": self.missing_fields}
+        )
 
 
 class MirixAgentNotFoundError(MirixError):
@@ -64,48 +73,59 @@ class LLMError(MirixError):
 
 class LLMAuthenticationError(LLMError):
     """Error raised when LLM authentication fails."""
+
     pass
 
 
 class LLMBadRequestError(LLMError):
     """Error raised when LLM request is malformed."""
+
     pass
 
 
 class LLMConnectionError(LLMError):
     """Error raised when LLM connection fails."""
+
     pass
 
 
 class LLMNotFoundError(LLMError):
     """Error raised when LLM resource is not found."""
+
     pass
 
 
 class LLMPermissionDeniedError(LLMError):
     """Error raised when LLM permission is denied."""
+
     pass
 
 
 class LLMRateLimitError(LLMError):
     """Error raised when LLM rate limit is exceeded."""
+
     pass
 
 
 class LLMServerError(LLMError):
     """Error raised when LLM server encounters an error."""
+
     pass
 
 
 class LLMUnprocessableEntityError(LLMError):
     """Error raised when LLM cannot process the entity."""
+
     pass
 
 
 class BedrockPermissionError(MirixError):
     """Exception raised for errors in the Bedrock permission process."""
 
-    def __init__(self, message="User does not have access to the Bedrock model with the specified ID."):
+    def __init__(
+        self,
+        message="User does not have access to the Bedrock model with the specified ID.",
+    ):
         super().__init__(message=message)
 
 
@@ -167,19 +187,32 @@ class MirixMessageError(MirixError):
     messages: List[Union["Message", "MirixMessage"]]
     default_error_message: str = "An error occurred with the message."
 
-    def __init__(self, *, messages: List[Union["Message", "MirixMessage"]], explanation: Optional[str] = None) -> None:
-        error_msg = self.construct_error_message(messages, self.default_error_message, explanation)
+    def __init__(
+        self,
+        *,
+        messages: List[Union["Message", "MirixMessage"]],
+        explanation: Optional[str] = None,
+    ) -> None:
+        error_msg = self.construct_error_message(
+            messages, self.default_error_message, explanation
+        )
         super().__init__(error_msg)
         self.messages = messages
 
     @staticmethod
-    def construct_error_message(messages: List[Union["Message", "MirixMessage"]], error_msg: str, explanation: Optional[str] = None) -> str:
+    def construct_error_message(
+        messages: List[Union["Message", "MirixMessage"]],
+        error_msg: str,
+        explanation: Optional[str] = None,
+    ) -> str:
         """Helper method to construct a clean and formatted error message."""
         if explanation:
             error_msg += f" (Explanation: {explanation})"
 
         # Pretty print out message JSON
-        message_json = json.dumps([message.model_dump() for message in messages], indent=4)
+        message_json = json.dumps(
+            [message.model_dump() for message in messages], indent=4
+        )
         return f"{error_msg}\n\n{message_json}"
 
 
@@ -192,16 +225,7 @@ class MissingToolCallError(MirixMessageError):
 class InvalidToolCallError(MirixMessageError):
     """Error raised when a message uses an invalid tool call."""
 
-    default_error_message = "The message uses an invalid tool call or has improper usage of a tool call."
+    default_error_message = (
+        "The message uses an invalid tool call or has improper usage of a tool call."
+    )
 
-
-class MissingInnerMonologueError(MirixMessageError):
-    """Error raised when a message is missing an inner monologue."""
-
-    default_error_message = "The message is missing an inner monologue."
-
-
-class InvalidInnerMonologueError(MirixMessageError):
-    """Error raised when a message has a malformed inner monologue."""
-
-    default_error_message = "The message has a malformed inner monologue."

@@ -4,76 +4,168 @@
 
 Your personal AI that builds memory through screen observation and natural conversation
 
-| 🌐 [Website](https://mirix.io) | 📚 [Documentation](https://docs.mirix.io) | 📄 [Paper](https://arxiv.org/abs/2507.07957) |
-<!-- | [Twitter/X](https://twitter.com/mirix_ai) | [Discord](https://discord.gg/mirix) | -->
+<table>
+  <tr>
+    <td style="border-left: 6px solid #d35400; background: #fff3e0; padding: 12px;">
+      <strong>Important Update: 0.1.6 (Main) vs 0.1.3 (Desktop Agent)</strong><br/>
+      Starting with <code>0.1.6</code>, the <code>main</code> branch is a brand-new release line where Mirix is a pure memory system that can be plugged into any existing agents. The desktop personal assistant (frontend + backend) has been deprecated and is no longer shipped on <code>main</code>. If you need the earlier desktop application with the built-in agent, use the <code>desktop-agent</code> branch.
+    </td>
+  </tr>
+</table>
+
+| 🌐 [Website](https://mirix.io) | 📚 [Documentation](https://docs.mirix.io) | 📄 [Paper](https://arxiv.org/abs/2507.07957) | 💬 [Discord](https://discord.gg/S6CeHNrJ) 
+<!-- | [Twitter/X](https://twitter.com/mirix_ai) | [Discord](https://discord.gg/S6CeHNrJ) | -->
 
 ---
 
 ### Key Features 🔥
 
-- **Multi-Agent Memory System:** Six specialized memory components (Core, Episodic, Semantic, Procedural, Resource, Knowledge Vault) managed by dedicated agents
+- **Multi-Agent Memory System:** Six specialized memory components (Core, Episodic, Semantic, Procedural, Resource, Knowledge) managed by dedicated agents
 - **Screen Activity Tracking:** Continuous visual data capture and intelligent consolidation into structured memories  
 - **Privacy-First Design:** All long-term data stored locally with user-controlled privacy settings
 - **Advanced Search:** PostgreSQL-native BM25 full-text search with vector similarity support
 - **Multi-Modal Input:** Text, images, voice, and screen captures processed seamlessly
 
 ### Quick Start
-**End-Users**: For end-users who want to build your own memory using MIRIX, please checkout the quick installation guide [here](https://docs.mirix.io/getting-started/installation/#quick-installation-dmg).
-
-**Developers**: For users who want to apply our memory system as the backend, please check out our [Backend Usage](https://docs.mirix.io/user-guide/backend-usage/). Basically, you just need to run:
+**Option A: Cloud (hosted API):**
 ```
-git clone git@github.com:Mirix-AI/MIRIX.git
-cd MIRIX
+pip install mirix==0.1.6
+```
+Get your API key and view memory call traces at https://app.mirix.io.
+```python
+from mirix import MirixClient
 
-# Create and activate virtual environment
-python -m venv mirix_env
-source mirix_env/bin/activate  # On Windows: mirix_env\Scripts\activate
+client = MirixTerClient(api_key="your_api_key_here")
+# or set MIRIX_API_KEY in your environment, then use: client = MirixClient()
 
+client.initialize_meta_agent(
+    provider="openai"
+)  # See configs in mirix/configs/examples/mirix_openai.yaml
+
+# Simple add example
+client.add(
+    user_id="demo-user",
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": "The moon now has a president."}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]},
+    ],
+)
+
+# For a full example, see README.md below or samples/run_client.py
+```
+
+**Option B: Local (backend + dashboard, no Docker):**
+**Step 1: Backend & Dashboard**
+```
 pip install -r requirements.txt
 ```
-Then you can run the following python code:
+In terminal 1:
+```
+python scripts/start_server.py
+```
+In terminal 2:
+```
+cd dashboard
+npm install
+npm run dev
+```
+- Dashboard: http://localhost:5173  
+- API: http://localhost:8531  
+
+**Step 2: Create an API key in the dashboard (http://localhost:5173) and set as the environmental variable `MIRIX_API_KEY`.**
+
+**Option C: Local (backend only, no dashboard):**
+**Step 1: Backend**
+```
+pip install -r requirements.txt
+python scripts/start_server.py --allow-terminal-user-creation
+```
+- API: http://localhost:8531  
+
+**Step 2: Create or load a client from the API**
+You can bootstrap a client from code using `client_name` (or `client_id`) and the server will create the client + admin user for you.
+
+> **⚠️ Important Note for Local Development:**  
+> When using the local version, **do NOT use the PyPI package** (`mirix==0.1.6`). You must run your code from the root folder of this project so that the local `mirix` module can be properly imported. If you previously installed the PyPI package, uninstall it first:
+> ```bash
+> pip uninstall mirix
+> ```
+
+Now you are ready to go! See the example below:
 ```python
-from mirix.agent import AgentWrapper
-
-# Initialize agent with configuration
-agent = AgentWrapper("./mirix/configs/mirix.yaml")
-
-# Send basic text information
-agent.send_message(
-    message="The moon now has a president.",
-    memorizing=True,
-    force_absorb_content=True
+# If you went with Option B (dashboard enabled, you need to get api_key from the dashboard)
+from mirix import MirixClient
+client = MirixClient(
+    api_key="your-api-key", # if you set MIRIX_API_KEY as the environmental variable then you don't need this
+    base_url="http://localhost:8531",
 )
+
+# If you went with Option C (no api_key required): 
+from mirix import MirixTerminalClient
+client = MirixClient(
+    client_id="demo-client-id",
+    client_name="demo-client-name",
+    base_url="http://localhost:8531",
+)
+
+client.initialize_meta_agent(
+    config={
+        "llm_config": {
+            "model": "gpt-4o-mini",
+            "model_endpoint_type": "openai",
+            "model_endpoint": "https://api.openai.com/v1",
+            "context_window": 128000,
+        },
+        "build_embeddings_for_memory": True,
+        "embedding_config": {
+            "embedding_model": "text-embedding-3-small",
+            "embedding_endpoint": "https://api.openai.com/v1",
+            "embedding_endpoint_type": "openai",
+            "embedding_dim": 1536,
+        },
+        "meta_agent_config": {
+            "agents": [
+                "core_memory_agent",
+                "resource_memory_agent",
+                "semantic_memory_agent",
+                "episodic_memory_agent",
+                "procedural_memory_agent",
+                "knowledge_memory_agent",
+                "reflexion_agent",
+                "background_agent",
+            ],
+            "memory": {
+                "core": [
+                    {"label": "human", "value": ""},
+                    {"label": "persona", "value": "I am a helpful assistant."},
+                ],
+                "decay": {
+                    "fade_after_days": 30,
+                    "expire_after_days": 90,
+                },
+            },
+        },
+    }
+)
+
+client.add(
+    user_id="demo-user",
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": "The moon now has a president."}]},
+        {"role": "assistant", "content": [{"type": "text", "text": "Noted."}]},
+    ],
+)
+
+memories = client.retrieve_with_conversation(
+    user_id="demo-user",
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": "What did we discuss on MirixDB in last 4 days?"}]},
+    ],
+    limit=5,
+)
+print(memories)
 ```
-For more details, please refer to [Backend Usage](https://docs.mirix.io/user-guide/backend-usage/).
-
-## Python SDK (NEW!) 🎉
-
-We've created a simple Python SDK that makes it incredibly easy to integrate Mirix's memory capabilities into your applications:
-
-### Installation
-```bash
-pip install mirix
-```
-
-### Quick Start with SDK
-```python
-from mirix import Mirix
-
-# Initialize memory agent (defaults to Google Gemini 2.0 Flash)
-memory_agent = Mirix(api_key="your-google-api-key")
-
-# Add memories
-memory_agent.add("The moon now has a president")
-memory_agent.add("John loves Italian food and is allergic to peanuts")
-
-# Chat with memory context
-response = memory_agent.chat("Does the moon have a president?")
-print(response)  # "Yes, according to my memory, the moon has a president."
-
-response = memory_agent.chat("What does John like to eat?") 
-print(response)  # "John loves Italian food. However, he's allergic to peanuts."
-```
+For more API examples, see `samples/run_client.py`.
 
 ## License
 
@@ -81,7 +173,7 @@ Mirix is released under the Apache License 2.0. See the [LICENSE](LICENSE) file 
 
 ## Contact
 
-For questions, suggestions, or issues, please open an issue on the GitHub repository or contact us at `yuwang@mirix.io`
+For questions, suggestions, or issues, please open an issue on the GitHub repository or contact us at `founders@mirix.io`
 
 ## Join Our Community
 
@@ -89,7 +181,7 @@ Connect with other Mirix users, share your thoughts, and get support:
 
 ### 💬 Discord Community
 Join our Discord server for real-time discussions, support, and community updates:
-**[https://discord.gg/5HWyxJrh](https://discord.gg/5HWyxJrh)**
+**[https://discord.gg/FXtXJuRf](https://discord.gg/FXtXJuRf)**
 
 ### 🎯 Weekly Discussion Sessions
 We host weekly discussion sessions where you can:
@@ -102,14 +194,7 @@ We host weekly discussion sessions where you can:
 **🔗 Zoom Link:** [https://ucsd.zoom.us/j/96278791276](https://ucsd.zoom.us/j/96278791276)
 
 ### 📱 WeChat Group
-<div align="center">
-<img src="frontend/public/wechat-qr.png" alt="WeChat QR Code" width="200"/><br/>
-<strong>WeChat Group</strong>
-</div>
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Mirix-AI/MIRIX&type=Date)](https://star-history.com/#Mirix-AI/MIRIX.&Date)
+You can add the account `ari_asm` so that I can add you to the group chat.
 
 ## Acknowledgement
 We would like to thank [Letta](https://github.com/letta-ai/letta) for open-sourcing their framework, which served as the foundation for the memory system in this project.
